@@ -1,0 +1,45 @@
+name: Cache command containment
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+permissions:
+  contents: read
+jobs:
+  probe:
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    steps:
+      - id: normal
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: inert-cache-path
+          key: normal-control-${{ github.run_id }}
+          lookup-only: true
+      - id: injected
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: inert-cache-path
+          key: ${{ github.event.pull_request.body }}
+          lookup-only: true
+      - name: Fixed downstream oracle
+        if: always()
+        env:
+          NORMAL_PROBE: ${{ steps.normal.outputs.probe }}
+          INJECTED_PROBE: ${{ steps.injected.outputs.probe }}
+          PRIMARY_KEY: ${{ steps.injected.outputs.cache-primary-key }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os
+          normal = os.environ.get('NORMAL_PROBE', '')
+          injected = os.environ.get('INJECTED_PROBE', '')
+          primary = os.environ.get('PRIMARY_KEY', '')
+          result = {
+              'normal_probe_empty': normal == '',
+              'injected_probe_exact': hashlib.sha256(injected.encode()).hexdigest() == 'fa1f38dc2bb6c50b5b409af2a72a76fbd99cba23ebc98f6117ef8a53f3a46d45' and len(injected) == 33,
+              'injected_probe_sha256': hashlib.sha256(injected.encode()).hexdigest(),
+              'injected_probe_length': len(injected),
+              'primary_contains_marker': 'CACHECMDLIVE-799adb23af4186c7c215' in primary,
+              'primary_line_count': len(primary.splitlines()),
+          }
+          print('CACHE_COMMAND_ORACLE ' + json.dumps(result, sort_keys=True, separators=(',', ':')))
+          PY
